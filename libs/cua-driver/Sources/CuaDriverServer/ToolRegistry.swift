@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import CuaDriverCore
 import Foundation
@@ -60,8 +61,19 @@ public struct ToolRegistry: Sendable {
         // so the recorded span brackets the full action duration.
         let actionStartNs: UInt64 = Self.actionToolNames.contains(name)
             ? clock_gettime_nsec_np(CLOCK_UPTIME_RAW) : 0
+        let actionSafetySnapshot: ActionSafetySnapshot? = Self.actionToolNames.contains(name)
+            ? await ActionSafetySnapshot.capture() : nil
 
-        let result = try await handler.invoke(arguments)
+        var result = try await handler.invoke(arguments)
+        if let actionSafetySnapshot,
+           result.structuredContent == nil
+        {
+            result = await actionSafetySnapshot.resultByAddingReceipt(
+                to: result,
+                toolName: name,
+                arguments: arguments
+            )
+        }
 
         // Recording hook — runs AFTER the tool's invoke. Errors inside
         // the recorder are swallowed by the actor; the tool caller
@@ -263,4 +275,133 @@ public struct ToolRegistry: Sendable {
         ZoomTool.handler,
         PageTool.handler,
     ])
+}
+
+private struct ActionReceipt: Codable, Sendable {
+    let ok: Bool
+    let route: String
+    let lane: String
+    let backgroundSafe: Bool
+    let cursorMoved: Bool
+    let foregroundChanged: Bool
+    let session: String
+    let reason: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case ok
+        case route
+        case lane
+        case backgroundSafe = "background_safe"
+        case cursorMoved = "cursor_moved"
+        case foregroundChanged = "foreground_changed"
+        case session
+        case reason
+    }
+}
+
+private struct ActionSafetySnapshot: Sendable {
+    let cursorX: Double?
+    let cursorY: Double?
+    let frontmostPid: pid_t?
+
+    static func capture() async -> ActionSafetySnapshot {
+        let point = CGEvent(source: nil)?.location
+        let frontmostPid = await MainActor.run {
+            NSWorkspace.shared.frontmostApplication?.processIdentifier
+        }
+        return ActionSafetySnapshot(
+            cursorX: point.map { Double($0.x) },
+            cursorY: point.map { Double($0.y) },
+            frontmostPid: frontmostPid
+        )
+    }
+
+    func resultByAddingReceipt(
+        to result: CallTool.Result,
+        toolName: String,
+        arguments: [String: Value]?
+    ) async -> CallTool.Result {
+        let after = await Self.capture()
+        let cursorMoved = Self.cursorMoved(
+            beforeX: cursorX,
+            beforeY: cursorY,
+            afterX: after.cursorX,
+            afterY: after.cursorY
+        )
+        let foregroundChanged =
+            frontmostPid != nil && after.frontmostPid != nil
+            && frontmostPid != after.frontmostPid
+        let backgroundSafe = !cursorMoved && !foregroundChanged
+        let toolErrored = result.isError == true
+        let reason = Self.reason(
+            toolErrored: toolErrored,
+            cursorMoved: cursorMoved,
+            foregroundChanged: foregroundChanged
+        )
+        let receipt = ActionReceipt(
+            ok: !toolErrored && backgroundSafe,
+            route: "cua-driver.\(toolName)",
+            lane: Self.lane(arguments),
+            backgroundSafe: backgroundSafe,
+            cursorMoved: cursorMoved,
+            foregroundChanged: foregroundChanged,
+            session: Self.session(arguments),
+            reason: reason
+        )
+        return (try? CallTool.Result(
+            content: result.content,
+            structuredContent: receipt,
+            isError: result.isError,
+            _meta: result._meta
+        )) ?? result
+    }
+
+    private static func cursorMoved(
+        beforeX: Double?,
+        beforeY: Double?,
+        afterX: Double?,
+        afterY: Double?
+    ) -> Bool {
+        guard let beforeX, let beforeY, let afterX, let afterY else {
+            return false
+        }
+        return abs(afterX - beforeX) > 0.5 || abs(afterY - beforeY) > 0.5
+    }
+
+    private static func reason(
+        toolErrored: Bool,
+        cursorMoved: Bool,
+        foregroundChanged: Bool
+    ) -> String? {
+        var parts: [String] = []
+        if toolErrored { parts.append("tool_error") }
+        if cursorMoved { parts.append("cursor_moved") }
+        if foregroundChanged { parts.append("foreground_changed") }
+        return parts.isEmpty ? nil : parts.joined(separator: ",")
+    }
+
+    private static func lane(_ arguments: [String: Value]?) -> String {
+        if arguments?["window_id"]?.intValue != nil {
+            return "leased_window"
+        }
+        if arguments?["pid"]?.intValue != nil {
+            return "pid_targeted"
+        }
+        return "global"
+    }
+
+    private static func session(_ arguments: [String: Value]?) -> String {
+        let pid = arguments?["pid"]?.intValue
+        let windowId = arguments?["window_id"]?.intValue
+        switch (pid, windowId) {
+        case let (pid?, windowId?):
+            return "pid=\(pid) window_id=\(windowId)"
+        case let (pid?, nil):
+            return "pid=\(pid)"
+        case let (nil, windowId?):
+            return "window_id=\(windowId)"
+        default:
+            return "unknown"
+        }
+    }
 }

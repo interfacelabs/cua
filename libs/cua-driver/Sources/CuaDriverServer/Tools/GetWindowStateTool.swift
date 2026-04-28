@@ -46,13 +46,13 @@ public enum GetWindowStateTool {
                 `tree_markdown` is an empty string; the caller can retry
                 without the filter.
 
-                Response shape is controlled by the persistent
-                `capture_mode` config setting (default `som`). Each
-                mode skips the half of the work it doesn't need — not
-                just the half of the response. Note that `vision` names
-                the capture MODE; the separate `screenshot` tool (which
-                captures a raw PNG without walking AX) is unrelated and
-                keeps its name:
+                Response shape is controlled by the optional per-call
+                `capture_mode` argument, falling back to the persistent
+                `capture_mode` config setting (default `som`). Each mode
+                skips the half of the work it doesn't need — not just the
+                half of the response. Note that `vision` names the capture
+                MODE; the separate `screenshot` tool (which captures a raw
+                PNG without walking AX) is unrelated and keeps its name:
                   - `som`    — walks AX tree AND captures screenshot
                                (default). Element-indexed clicks work
                                out of the box; screenshot is there for
@@ -71,8 +71,9 @@ public enum GetWindowStateTool {
                   - `ax`     — walks AX tree; screen-capture call is
                                skipped entirely (no Screen Recording
                                hit). `screenshot_*` fields omitted.
-                Change with `cua-driver config set capture_mode <mode>` or
-                the `set_config` tool.
+                Override one call with `capture_mode`, or change the default
+                with `cua-driver config set capture_mode <mode>` or the
+                `set_config` tool.
 
                 Requires Accessibility and Screen Recording permissions.
                 """,
@@ -93,6 +94,11 @@ public enum GetWindowStateTool {
                         "type": "string",
                         "description":
                             "Optional case-insensitive substring. When set, `tree_markdown` only contains lines that match plus their ancestor chain; element indices and `element_count` are unchanged.",
+                    ],
+                    "capture_mode": [
+                        "type": "string",
+                        "description":
+                            "Optional one-call response/work mode: `som` (AX tree + screenshot), `ax` (AX tree only), or `vision`/`screenshot` (screenshot only). Defaults to persisted config.",
                     ],
                     "javascript": [
                         "type": "string",
@@ -137,6 +143,7 @@ public enum GetWindowStateTool {
             }
             let query = arguments?["query"]?.stringValue
             let javascript = arguments?["javascript"]?.stringValue
+            let captureModeOverride = arguments?["capture_mode"]?.stringValue
 
             // Validate that the window belongs to this pid. The driver
             // never guesses which window to snapshot — the caller names
@@ -156,7 +163,17 @@ public enum GetWindowStateTool {
             // cheap (single JSON decode of a tiny file, or fall-through to
             // the cached default when the file is absent).
             let config = await ConfigStore.shared.load()
-            let captureMode = config.captureMode
+            let captureMode: CaptureMode
+            if let captureModeOverride, !captureModeOverride.isEmpty {
+                guard let parsed = parseCaptureModeOverride(captureModeOverride) else {
+                    return errorResult(
+                        "Invalid capture_mode `\(captureModeOverride)`. Expected one of: som, ax, vision, screenshot."
+                    )
+                }
+                captureMode = parsed
+            } else {
+                captureMode = config.captureMode
+            }
             let maxImageDim = config.maxImageDimension
 
             do {
@@ -410,6 +427,19 @@ public enum GetWindowStateTool {
             if char == " " { count += 1 } else { break }
         }
         return count / 2
+    }
+
+    private static func parseCaptureModeOverride(_ raw: String) -> CaptureMode? {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "som":
+            return .som
+        case "ax":
+            return .ax
+        case "vision", "screenshot":
+            return .vision
+        default:
+            return nil
+        }
     }
 
     private static func errorResult(_ message: String) -> CallTool.Result {
