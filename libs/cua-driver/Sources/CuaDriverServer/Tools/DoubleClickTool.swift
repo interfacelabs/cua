@@ -228,7 +228,8 @@ public enum DoubleClickTool {
                 toPid: pid,
                 button: .left,
                 count: 2,
-                modifiers: []
+                modifiers: [],
+                targetWindowId: CGWindowID(windowId)
             )
             await MainActor.run {
                 AgentCursor.shared.pinAbove(pid: pid)
@@ -302,7 +303,8 @@ public enum DoubleClickTool {
                 toPid: pid,
                 button: .left,
                 count: 2,
-                modifiers: modifiers
+                modifiers: modifiers,
+                targetWindowId: CGWindowID(anchorWindowId)
             )
             await MainActor.run {
                 AgentCursor.shared.pinAbove(pid: pid)

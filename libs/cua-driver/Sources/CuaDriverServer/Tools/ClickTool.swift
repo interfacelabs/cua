@@ -524,7 +524,8 @@ public enum ClickTool {
                 toPid: pid,
                 button: .left,
                 count: count,
-                modifiers: modifiers
+                modifiers: modifiers,
+                targetWindowId: CGWindowID(anchorWindowId)
             )
             await MainActor.run {
                 AgentCursor.shared.pinAbove(pid: pid)

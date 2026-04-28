@@ -297,7 +297,8 @@ public enum DragTool {
                     button: button,
                     durationMs: durationMs,
                     steps: steps,
-                    modifiers: modifiers
+                    modifiers: modifiers,
+                    targetWindowId: CGWindowID(anchorWindowId)
                 )
             }
             await MainActor.run {

@@ -307,7 +307,10 @@ public enum RightClickTool {
 
         do {
             try MouseInput.rightClick(
-                at: screenPoint, toPid: pid, modifiers: modifiers)
+                at: screenPoint,
+                toPid: pid,
+                modifiers: modifiers,
+                targetWindowId: CGWindowID(anchorWindowId))
             await MainActor.run {
                 AgentCursor.shared.pinAbove(pid: pid)
             }

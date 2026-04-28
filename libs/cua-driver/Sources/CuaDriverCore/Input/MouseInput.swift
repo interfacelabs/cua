@@ -106,7 +106,8 @@ public enum MouseInput {
         toPid pid: pid_t,
         button: Button,
         count: Int = 1,
-        modifiers: [String] = []
+        modifiers: [String] = [],
+        targetWindowId: CGWindowID? = nil
     ) throws {
         // When the target is frontmost, route via the public HID tap
         // (`CGEventPost(tap: .cghidEventTap)`) with a preceding
@@ -138,7 +139,11 @@ public enum MouseInput {
         // double-post path below.
         if button == .left, count == 1 || count == 2, modifiers.isEmpty {
             try clickViaAuthSignedPost(
-                at: point, toPid: pid, count: count, modifiers: modifiers)
+                at: point,
+                toPid: pid,
+                count: count,
+                modifiers: modifiers,
+                targetWindowId: targetWindowId)
             return
         }
 
@@ -147,7 +152,7 @@ public enum MouseInput {
         let modifierFlags = modifierMask(for: modifiers)
         let cocoaPoint = cocoaLocation(fromScreenPoint: point)
         let winNum = Int(
-            WindowEnumerator.frontmostWindow(forPid: pid)
+            resolveTargetWindow(forPid: pid, targetWindowId: targetWindowId)
                 .map { Int64(CGWindowID($0.id)) } ?? 0)
 
         for clickIndex in 1...clamped {
@@ -265,7 +270,8 @@ public enum MouseInput {
         at point: CGPoint,
         toPid pid: pid_t,
         count: Int = 1,
-        modifiers: [String]
+        modifiers: [String],
+        targetWindowId: CGWindowID? = nil
     ) throws {
         // Caller contract: count is 1 or 2 (guarded at the click()
         // entry). Anything else falls through to the NSEvent-bridge
@@ -273,7 +279,9 @@ public enum MouseInput {
         let clickPairs = max(1, min(2, count))
         // Resolve target window — CGWindowID for field stamps + window-
         // local point + PSN lookup for the focus-without-raise step.
-        let targetWindow = WindowEnumerator.frontmostWindow(forPid: pid)
+        let targetWindow = resolveTargetWindow(
+            forPid: pid,
+            targetWindowId: targetWindowId)
         let windowID = Int64(targetWindow.map { CGWindowID($0.id) } ?? 0)
         let winNum = Int(windowID)
 
@@ -421,14 +429,16 @@ public enum MouseInput {
     public static func rightClick(
         at point: CGPoint,
         toPid pid: pid_t,
-        modifiers: [String] = []
+        modifiers: [String] = [],
+        targetWindowId: CGWindowID? = nil
     ) throws {
         try click(
             at: point,
             toPid: pid,
             button: .right,
             count: 1,
-            modifiers: modifiers
+            modifiers: modifiers,
+            targetWindowId: targetWindowId
         )
     }
 
@@ -463,7 +473,8 @@ public enum MouseInput {
         button: Button = .left,
         durationMs: Int = 500,
         steps: Int = 20,
-        modifiers: [String] = []
+        modifiers: [String] = [],
+        targetWindowId: CGWindowID? = nil
     ) throws {
         let clampedSteps = max(1, min(200, steps))
         let clampedDuration = max(0, min(10_000, durationMs))
@@ -490,7 +501,7 @@ public enum MouseInput {
         let draggedType = nsDraggedType(for: button)
         let modifierFlags = modifierMask(for: modifiers)
         let winNum = Int(
-            WindowEnumerator.frontmostWindow(forPid: pid)
+            resolveTargetWindow(forPid: pid, targetWindowId: targetWindowId)
                 .map { Int64(CGWindowID($0.id)) } ?? 0)
 
         let down = try buildCGEvent(
@@ -636,6 +647,19 @@ public enum MouseInput {
     }
 
     // MARK: - Private helpers
+
+    private static func resolveTargetWindow(
+        forPid pid: pid_t,
+        targetWindowId: CGWindowID?
+    ) -> WindowInfo? {
+        if let targetWindowId {
+            let target = WindowEnumerator.allWindows().first {
+                $0.pid == pid && CGWindowID($0.id) == targetWindowId
+            }
+            if let target { return target }
+        }
+        return WindowEnumerator.frontmostWindow(forPid: pid)
+    }
 
     private static func buildCGEvent(
         type: NSEvent.EventType,
