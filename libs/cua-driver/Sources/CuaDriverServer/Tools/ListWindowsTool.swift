@@ -39,6 +39,11 @@ public enum ListWindowsTool {
                   global screen points.
                 - display_id: CoreGraphics display containing the largest
                   part of the window, when available.
+                - role / subrole / document_url / document_path /
+                  is_main / is_key / is_focused / is_modal /
+                  parent_window_id: best-effort Accessibility metadata
+                  when available. Omitted when Accessibility is not
+                  granted or the app does not expose the attribute.
                 - layer: CGWindow stratum. Always 0 in the default
                   filter; reserved for future higher-layer opt-in.
                 - z_index: stacking order on the current Space (higher =
@@ -59,6 +64,10 @@ public enum ListWindowsTool {
                 - windows: array of the per-window records above.
                 - current_space_id: user's active Space id, or null when
                   SPI unavailable.
+                - snapshot_token: daemon-local token that can be passed
+                  to `diff_windows` after an action to compute created /
+                  destroyed / changed windows without re-identifying
+                  everything client-side.
 
                 Inputs: pid (optional — restrict to one pid's windows),
                 on_screen_only (bool, default false — surface off-Space /
@@ -116,20 +125,31 @@ public enum ListWindowsTool {
 
             let currentSpaceID = SpaceMigrator.currentSpaceID()
             let identities = await WindowIdentityStore.shared.metadata(for: windows)
+            let axByPid = Dictionary(
+                uniqueKeysWithValues: Set(windows.map(\.pid)).map {
+                    ($0, WindowAXMetadataReader.metadata(forPid: $0))
+                }
+            )
             let records = windows.map { info -> Row in
                 row(
                     for: info,
                     currentSpaceID: currentSpaceID,
-                    identity: identities[info.id]
+                    identity: identities[info.id],
+                    axMetadata: axByPid[info.pid]?[info.id]
                 )
             }
+            let snapshotToken = await WindowSnapshotStore.shared.store(records)
 
             let textContent: Tool.Content = .text(
                 text: summary(records, currentSpaceID: currentSpaceID),
                 annotations: nil,
                 _meta: nil
             )
-            let output = Output(windows: records, currentSpaceId: currentSpaceID)
+            let output = Output(
+                windows: records,
+                currentSpaceId: currentSpaceID,
+                snapshotToken: snapshotToken
+            )
             if let result = try? CallTool.Result(
                 content: [textContent],
                 structuredContent: output
@@ -152,6 +172,16 @@ public enum ListWindowsTool {
         let title: String
         let bounds: WindowBounds
         let displayId: UInt32?
+        let role: String?
+        let subrole: String?
+        let document: String?
+        let documentURL: String?
+        let documentPath: String?
+        let isMain: Bool?
+        let isKey: Bool?
+        let isFocused: Bool?
+        let isModal: Bool?
+        let parentWindowId: Int?
         let layer: Int
         let zIndex: Int
         let isOnScreen: Bool
@@ -170,6 +200,16 @@ public enum ListWindowsTool {
             case title
             case bounds
             case displayId = "display_id"
+            case role
+            case subrole
+            case document
+            case documentURL = "document_url"
+            case documentPath = "document_path"
+            case isMain = "is_main"
+            case isKey = "is_key"
+            case isFocused = "is_focused"
+            case isModal = "is_modal"
+            case parentWindowId = "parent_window_id"
             case layer
             case zIndex = "z_index"
             case isOnScreen = "is_on_screen"
@@ -190,6 +230,16 @@ public enum ListWindowsTool {
             try c.encode(title, forKey: .title)
             try c.encode(bounds, forKey: .bounds)
             try c.encodeIfPresent(displayId, forKey: .displayId)
+            try c.encodeIfPresent(role, forKey: .role)
+            try c.encodeIfPresent(subrole, forKey: .subrole)
+            try c.encodeIfPresent(document, forKey: .document)
+            try c.encodeIfPresent(documentURL, forKey: .documentURL)
+            try c.encodeIfPresent(documentPath, forKey: .documentPath)
+            try c.encodeIfPresent(isMain, forKey: .isMain)
+            try c.encodeIfPresent(isKey, forKey: .isKey)
+            try c.encodeIfPresent(isFocused, forKey: .isFocused)
+            try c.encodeIfPresent(isModal, forKey: .isModal)
+            try c.encodeIfPresent(parentWindowId, forKey: .parentWindowId)
             try c.encode(layer, forKey: .layer)
             try c.encode(zIndex, forKey: .zIndex)
             try c.encode(isOnScreen, forKey: .isOnScreen)
@@ -204,10 +254,12 @@ public enum ListWindowsTool {
     struct Output: Codable, Sendable {
         let windows: [Row]
         let currentSpaceId: UInt64?
+        let snapshotToken: String
 
         private enum CodingKeys: String, CodingKey {
             case windows
             case currentSpaceId = "current_space_id"
+            case snapshotToken = "snapshot_token"
         }
     }
 
@@ -221,7 +273,8 @@ public enum ListWindowsTool {
     static func row(
         for info: WindowInfo,
         currentSpaceID: UInt64?,
-        identity: WindowIdentityMetadata?
+        identity: WindowIdentityMetadata?,
+        axMetadata: WindowAXMetadata? = nil
     ) -> Row {
         let spaceIDs = SpaceMigrator.spaceIDs(forWindowID: UInt32(info.id))
         let onCurrentSpace: Bool? = {
@@ -240,6 +293,16 @@ public enum ListWindowsTool {
             title: info.name,
             bounds: info.bounds,
             displayId: displayID(for: info.bounds),
+            role: axMetadata?.role,
+            subrole: axMetadata?.subrole,
+            document: axMetadata?.document,
+            documentURL: axMetadata?.documentURL,
+            documentPath: axMetadata?.documentPath,
+            isMain: axMetadata?.isMain,
+            isKey: axMetadata?.isFocused,
+            isFocused: axMetadata?.isFocused,
+            isModal: axMetadata?.isModal,
+            parentWindowId: axMetadata?.parentWindowID,
             layer: info.layer,
             zIndex: info.zIndex,
             isOnScreen: info.isOnScreen,

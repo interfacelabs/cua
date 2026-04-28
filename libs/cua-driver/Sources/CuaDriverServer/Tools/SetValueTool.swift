@@ -72,6 +72,13 @@ public enum SetValueTool {
                 return errorResult(
                     "window_id \(rawWindowId) is outside the supported UInt32 range.")
             }
+            if case .failure(let failure) = await WindowLeaseGuard.validate(
+                pid: pid,
+                windowId: windowId,
+                purpose: "set value on element_index \(index)"
+            ) {
+                return failure
+            }
             do {
                 let element = try await AppStateRegistry.engine.lookup(
                     pid: pid,

@@ -168,6 +168,13 @@ public enum DoubleClickTool {
     private static func performElementDoubleClick(
         pid: Int32, windowId: UInt32, index: Int
     ) async -> CallTool.Result {
+        if case .failure(let failure) = await WindowLeaseGuard.validate(
+            pid: pid,
+            windowId: windowId,
+            purpose: "double-click element_index \(index)"
+        ) {
+            return failure
+        }
         do {
             let element = try await AppStateRegistry.engine.lookup(
                 pid: pid,
@@ -250,19 +257,36 @@ public enum DoubleClickTool {
         pid: Int32, windowId: UInt32?,
         x: Double, y: Double, modifiers: [String]
     ) async -> CallTool.Result {
+        let lease = await WindowLeaseGuard.validate(
+            pid: pid,
+            windowId: windowId,
+            purpose: "double-click pixel coordinates"
+        )
+        let anchorWindowId: UInt32
+        switch lease {
+        case .success(let row):
+            anchorWindowId = UInt32(row.windowId)
+        case .failure(let failure):
+            return failure
+        }
+
         let screenPoint: CGPoint
         do {
-            if let windowId {
-                screenPoint = try WindowCoordinateSpace.screenPoint(
-                    fromImagePixel: CGPoint(x: x, y: y),
-                    forPid: pid,
-                    windowId: windowId)
-            } else {
-                screenPoint = try WindowCoordinateSpace.screenPoint(
-                    fromImagePixel: CGPoint(x: x, y: y), forPid: pid)
-            }
+            screenPoint = try WindowCoordinateSpace.screenPoint(
+                fromImagePixel: CGPoint(x: x, y: y),
+                forPid: pid,
+                windowId: anchorWindowId)
         } catch let error as WindowCoordinateSpaceError {
-            return errorResult(error.description)
+            return StructuredToolError.result(
+                code: "window_coordinate_resolution_failed",
+                message: error.description,
+                requested: WindowRequest(
+                    pid: pid,
+                    windowId: Int(anchorWindowId),
+                    windowUID: nil
+                ),
+                suggestedRecovery: "Call validate_window/list_windows and retry with the current target window_id."
+            )
         } catch {
             return errorResult("Unexpected error resolving window: \(error)")
         }

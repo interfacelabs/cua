@@ -76,11 +76,17 @@ public enum ValidateWindowTool {
             let samePidInfos = allInfos.filter { $0.pid == pid }
             let currentSpaceID = SpaceMigrator.currentSpaceID()
             let identities = await WindowIdentityStore.shared.metadata(for: allInfos)
+            let axByPid = Dictionary(
+                uniqueKeysWithValues: Set(allInfos.map(\.pid)).map {
+                    ($0, WindowAXMetadataReader.metadata(forPid: $0))
+                }
+            )
             let samePidRows = samePidInfos.map {
                 ListWindowsTool.row(
                     for: $0,
                     currentSpaceID: currentSpaceID,
-                    identity: identities[$0.id]
+                    identity: identities[$0.id],
+                    axMetadata: axByPid[$0.pid]?[$0.id]
                 )
             }
 
@@ -94,7 +100,8 @@ public enum ValidateWindowTool {
                 let row = ListWindowsTool.row(
                     for: found,
                     currentSpaceID: currentSpaceID,
-                    identity: identities[found.id]
+                    identity: identities[found.id],
+                    axMetadata: axByPid[found.pid]?[found.id]
                 )
                 if found.pid == pid {
                     return result(

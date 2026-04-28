@@ -238,6 +238,13 @@ public enum ClickTool {
         guard let axAction = axActionByName[actionName] else {
             return errorResult("Unknown action: \(actionName).")
         }
+        if case .failure(let failure) = await WindowLeaseGuard.validate(
+            pid: pid,
+            windowId: windowId,
+            purpose: "click element_index \(index)"
+        ) {
+            return failure
+        }
         do {
             let element = try await AppStateRegistry.engine.lookup(
                 pid: pid,
@@ -425,17 +432,30 @@ public enum ClickTool {
         fromZoom: Bool = false,
         debugImageOut: String? = nil
     ) async -> CallTool.Result {
+        let lease = await WindowLeaseGuard.validate(
+            pid: pid,
+            windowId: windowId,
+            purpose: "click pixel coordinates"
+        )
+        let anchorWindowId: UInt32
+        switch lease {
+        case .success(let row):
+            anchorWindowId = UInt32(row.windowId)
+        case .failure(let failure):
+            return failure
+        }
+
         // Write the debug crosshair BEFORE any coordinate mangling —
         // we want the saved image to reflect the exact (x, y) the
         // caller handed us, in the same resized space the caller
         // was reasoning in. The crosshair lands on the received
         // pixel; the caller compares against their own "intent"
         // crosshair to spot coord-space mismatches.
-        if let debugPath = debugImageOut, let windowId {
+        if let debugPath = debugImageOut {
             let config = await ConfigStore.shared.load()
             do {
                 try await DebugCrosshair.writeCrosshair(
-                    windowID: windowId,
+                    windowID: anchorWindowId,
                     point: CGPoint(x: x, y: y),
                     maxImageDimension: config.maxImageDimension,
                     path: debugPath
@@ -474,17 +494,21 @@ public enum ClickTool {
 
         let screenPoint: CGPoint
         do {
-            if let windowId {
-                screenPoint = try WindowCoordinateSpace.screenPoint(
-                    fromImagePixel: CGPoint(x: actualX, y: actualY),
-                    forPid: pid,
-                    windowId: windowId)
-            } else {
-                screenPoint = try WindowCoordinateSpace.screenPoint(
-                    fromImagePixel: CGPoint(x: actualX, y: actualY), forPid: pid)
-            }
+            screenPoint = try WindowCoordinateSpace.screenPoint(
+                fromImagePixel: CGPoint(x: actualX, y: actualY),
+                forPid: pid,
+                windowId: anchorWindowId)
         } catch let error as WindowCoordinateSpaceError {
-            return errorResult(error.description)
+            return StructuredToolError.result(
+                code: "window_coordinate_resolution_failed",
+                message: error.description,
+                requested: WindowRequest(
+                    pid: pid,
+                    windowId: Int(anchorWindowId),
+                    windowUID: nil
+                ),
+                suggestedRecovery: "Call validate_window/list_windows and retry with the current target window_id."
+            )
         } catch {
             return errorResult("Unexpected error resolving window: \(error)")
         }

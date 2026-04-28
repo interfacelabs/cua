@@ -90,13 +90,26 @@ public enum TypeTextTool {
                     + "element_index cache is scoped per (pid, window_id). Pass "
                     + "the same window_id you used in `get_window_state`.")
             }
+            let leaseWindowId: UInt32?
+            if let rawWindowId {
+                guard let checked = UInt32(exactly: rawWindowId) else {
+                    return errorResult(
+                        "window_id \(rawWindowId) is outside the supported UInt32 range.")
+                }
+                leaseWindowId = checked
+            } else {
+                leaseWindowId = nil
+            }
+            if case .failure(let failure) = await WindowLeaseGuard.validate(
+                pid: pid,
+                windowId: leaseWindowId,
+                purpose: "type text"
+            ) {
+                return failure
+            }
 
             do {
-                if let index = elementIndex, let rawWindowId {
-                    guard let windowId = UInt32(exactly: rawWindowId) else {
-                        return errorResult(
-                            "window_id \(rawWindowId) is outside the supported UInt32 range.")
-                    }
+                if let index = elementIndex, let windowId = leaseWindowId {
                     let element = try await AppStateRegistry.engine.lookup(
                         pid: pid,
                         windowId: windowId,

@@ -35,6 +35,11 @@ public enum HotkeyTool {
                         "description":
                             "Modifier(s) and one non-modifier key, e.g. [\"cmd\", \"c\"].",
                     ],
+                    "window_id": [
+                        "type": "integer",
+                        "description":
+                            "Optional CGWindowID lease guard. Required when the pid has multiple plausible windows so the hotkey cannot drift to another same-app window.",
+                    ],
                 ],
                 "additionalProperties": false,
             ],
@@ -59,6 +64,23 @@ public enum HotkeyTool {
             guard let pid = Int32(exactly: rawPid) else {
                 return errorResult(
                     "pid \(rawPid) is outside the supported Int32 range.")
+            }
+            let windowId: UInt32?
+            if let rawWindowId = arguments?["window_id"]?.intValue {
+                guard let checked = UInt32(exactly: rawWindowId) else {
+                    return errorResult(
+                        "window_id \(rawWindowId) is outside the supported UInt32 range.")
+                }
+                windowId = checked
+            } else {
+                windowId = nil
+            }
+            if case .failure(let failure) = await WindowLeaseGuard.validate(
+                pid: pid,
+                windowId: windowId,
+                purpose: "press hotkey \(keys.joined(separator: "+"))"
+            ) {
+                return failure
             }
             do {
                 try KeyboardInput.hotkey(keys, toPid: pid)

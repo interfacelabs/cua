@@ -126,10 +126,26 @@ public struct ToolRegistry: Sendable {
         let y = coerceDouble(arguments?["y"])
         if let x, let y, let pidRaw = arguments?["pid"]?.intValue {
             do {
-                return try WindowCoordinateSpace.screenPoint(
-                    fromImagePixel: CGPoint(x: x, y: y),
-                    forPid: Int32(pidRaw)
-                )
+                if let windowIdRaw = arguments?["window_id"]?.intValue,
+                   let windowId = UInt32(exactly: windowIdRaw)
+                {
+                    return try WindowCoordinateSpace.screenPoint(
+                        fromImagePixel: CGPoint(x: x, y: y),
+                        forPid: Int32(pidRaw),
+                        windowId: windowId
+                    )
+                }
+                if case .success(let row) = await WindowLeaseGuard.validate(
+                    pid: Int32(pidRaw),
+                    windowId: nil,
+                    purpose: "record click point"
+                ) {
+                    return try WindowCoordinateSpace.screenPoint(
+                        fromImagePixel: CGPoint(x: x, y: y),
+                        forPid: Int32(pidRaw),
+                        windowId: UInt32(row.windowId)
+                    )
+                }
             } catch {
                 return nil
             }
@@ -215,6 +231,8 @@ public struct ToolRegistry: Sendable {
     public static let `default` = ToolRegistry(handlers: [
         ListAppsTool.handler,
         ListWindowsTool.handler,
+        DiffWindowsTool.handler,
+        ListBrowserTabsTool.handler,
         ValidateWindowTool.handler,
         LaunchAppTool.handler,
         GetScreenSizeTool.handler,

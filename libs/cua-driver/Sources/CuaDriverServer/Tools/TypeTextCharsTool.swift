@@ -48,6 +48,11 @@ public enum TypeTextCharsTool {
                         "description":
                             "Milliseconds between successive characters. Default 30.",
                     ],
+                    "window_id": [
+                        "type": "integer",
+                        "description":
+                            "Optional CGWindowID lease guard. Required when the pid has multiple plausible windows so typed characters cannot drift to another same-app window.",
+                    ],
                 ],
                 "additionalProperties": false,
             ],
@@ -69,6 +74,23 @@ public enum TypeTextCharsTool {
             guard let pid = Int32(exactly: rawPid) else {
                 return errorResult(
                     "pid \(rawPid) is outside the supported Int32 range.")
+            }
+            let windowId: UInt32?
+            if let rawWindowId = arguments?["window_id"]?.intValue {
+                guard let checked = UInt32(exactly: rawWindowId) else {
+                    return errorResult(
+                        "window_id \(rawWindowId) is outside the supported UInt32 range.")
+                }
+                windowId = checked
+            } else {
+                windowId = nil
+            }
+            if case .failure(let failure) = await WindowLeaseGuard.validate(
+                pid: pid,
+                windowId: windowId,
+                purpose: "type characters"
+            ) {
+                return failure
             }
 
             do {

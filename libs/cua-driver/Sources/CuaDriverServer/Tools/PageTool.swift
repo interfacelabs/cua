@@ -119,6 +119,15 @@ public enum PageTool {
             guard let action = arguments?["action"]?.stringValue else {
                 return errorResult("Missing required field action.")
             }
+            if action != "enable_javascript_apple_events",
+               case .failure(let failure) = await WindowLeaseGuard.validate(
+                pid: pid,
+                windowId: windowId,
+                purpose: "run browser page action \(action)"
+               )
+            {
+                return failure
+            }
 
             // Resolve bundle ID from the running app (NSWorkspace requires main thread).
             let bundleId = await MainActor.run {

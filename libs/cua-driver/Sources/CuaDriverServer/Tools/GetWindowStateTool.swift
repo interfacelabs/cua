@@ -140,24 +140,14 @@ public enum GetWindowStateTool {
 
             // Validate that the window belongs to this pid. The driver
             // never guesses which window to snapshot — the caller names
-            // it explicitly — so a mismatched pid/window is a hard error.
-            // Off-Space windows are NOT rejected: the snapshot still
-            // carries `off_space: true` and the caller decides whether
-            // to proceed (useful for reading menu state on a window the
-            // user has parked elsewhere).
-            let allWindows = WindowEnumerator.allWindows()
-            guard let window = allWindows.first(where: {
-                UInt32($0.id) == windowId
-            }) else {
-                return errorResult(
-                    "No window with window_id \(windowId) exists. "
-                    + "Call `list_windows({pid: \(rawPid)})` for candidates.")
-            }
-            if window.pid != pid {
-                return errorResult(
-                    "window_id \(windowId) belongs to pid \(window.pid), not pid "
-                    + "\(rawPid). Call `list_windows({pid: \(rawPid)})` to get this "
-                    + "pid's own windows.")
+            // it explicitly — so a mismatched pid/window is a structured
+            // hard error.
+            if case .failure(let failure) = await WindowLeaseGuard.validate(
+                pid: pid,
+                windowId: windowId,
+                purpose: "snapshot window state"
+            ) {
+                return failure
             }
 
             // Re-read the persisted capture_mode on every invocation so a
